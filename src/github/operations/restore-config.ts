@@ -72,38 +72,72 @@ export function restoreConfigFromBase(baseBranch: string): void {
   // If the restore below fails for a given path, that path stays deleted —
   // the safe fallback (no attacker-controlled config). A bare `git checkout`
   // alone wouldn't remove files the PR added, so nuke first.
+  console.log(`[restore-config] Deleting PR-controlled sensitive paths...`);
   for (const p of SENSITIVE_PATHS) {
     rmSync(p, { recursive: true, force: true });
   }
+  console.log(`[restore-config] Sensitive paths deleted.`);
 
   // --no-recurse-submodules: explicitly suppress submodule fetching regardless of
   // fetch.recurseSubmodules config. Defense-in-depth alongside the delete above.
-  execFileSync(
-    "git",
-    ["fetch", "origin", baseBranch, "--depth=1", "--no-recurse-submodules"],
-    {
-      stdio: "inherit",
-      env: process.env,
-    },
+  const fetchArgs = [
+    "fetch",
+    "origin",
+    baseBranch,
+    "--depth=1",
+    "--no-recurse-submodules",
+  ];
+  console.log(
+    `[restore-config] Running: git ${fetchArgs.join(" ")} (timeout: 60s)`,
   );
+  const fetchStart = Date.now();
+  try {
+    execFileSync("git", fetchArgs, {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_LFS_SKIP_SMUDGE: "1",
+      },
+      timeout: 60_000,
+    });
+    console.log(
+      `[restore-config] git fetch completed in ${Date.now() - fetchStart}ms`,
+    );
+  } catch (error) {
+    const elapsed = Date.now() - fetchStart;
+    console.error(
+      `[restore-config] git fetch FAILED after ${elapsed}ms: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    throw error;
+  }
 
+  console.log(
+    `[restore-config] Checking out sensitive paths from origin/${baseBranch}...`,
+  );
   for (const p of SENSITIVE_PATHS) {
     try {
       execFileSync("git", ["checkout", `origin/${baseBranch}`, "--", p], {
         stdio: "pipe",
+        timeout: 10_000,
       });
+      console.log(`[restore-config]   ✓ ${p}`);
     } catch {
       // Path doesn't exist on base — it stays deleted.
+      console.log(`[restore-config]   - ${p} (not on base, stays deleted)`);
     }
   }
 
   // `git checkout <ref> -- <path>` stages the restored files. Unstage so the
   // revert doesn't silently leak into commits the CLI makes later.
+  console.log(`[restore-config] Unstaging restored files...`);
   try {
     execFileSync("git", ["reset", "--", ...SENSITIVE_PATHS], {
       stdio: "pipe",
+      timeout: 10_000,
     });
   } catch {
     // Nothing was staged, or paths don't exist on HEAD — either is fine.
   }
+  console.log(`[restore-config] Restore complete.`);
 }
