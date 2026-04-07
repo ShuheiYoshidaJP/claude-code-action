@@ -78,6 +78,47 @@ export function restoreConfigFromBase(baseBranch: string): void {
   }
   console.log(`[restore-config] Sensitive paths deleted.`);
 
+  // Dump git auth state for debugging fetch hangs on self-hosted runners.
+  try {
+    const remoteUrl = execFileSync("git", ["remote", "get-url", "origin"], {
+      stdio: "pipe",
+      timeout: 5_000,
+    })
+      .toString()
+      .trim();
+    console.log(`[restore-config] remote origin URL: ${remoteUrl}`);
+  } catch {
+    console.log(`[restore-config] remote origin URL: (failed to read)`);
+  }
+  try {
+    const gitConfig = execFileSync(
+      "git",
+      ["config", "--list", "--show-origin"],
+      { stdio: "pipe", timeout: 5_000 },
+    )
+      .toString()
+      .split("\n")
+      .filter(
+        (line) =>
+          /credential|helper|extraheader|askpass|url\./i.test(line),
+      )
+      .join("\n");
+    console.log(
+      `[restore-config] auth-related git config:\n${gitConfig || "(none)"}`,
+    );
+  } catch {
+    console.log(`[restore-config] auth-related git config: (failed to read)`);
+  }
+  console.log(
+    `[restore-config] GIT_ASKPASS=${process.env.GIT_ASKPASS || "(unset)"}`,
+  );
+  console.log(
+    `[restore-config] GH_TOKEN=${process.env.GH_TOKEN ? "(set, length=" + process.env.GH_TOKEN.length + ")" : "(unset)"}`,
+  );
+  console.log(
+    `[restore-config] GITHUB_TOKEN=${process.env.GITHUB_TOKEN ? "(set, length=" + process.env.GITHUB_TOKEN.length + ")" : "(unset)"}`,
+  );
+
   // --no-recurse-submodules: explicitly suppress submodule fetching regardless of
   // fetch.recurseSubmodules config. Defense-in-depth alongside the delete above.
   const fetchArgs = [
