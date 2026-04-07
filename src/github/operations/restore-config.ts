@@ -121,7 +121,24 @@ export function restoreConfigFromBase(baseBranch: string): void {
 
   // --no-recurse-submodules: explicitly suppress submodule fetching regardless of
   // fetch.recurseSubmodules config. Defense-in-depth alongside the delete above.
+  //
+  // Credential helper fix: On self-hosted macOS runners, the system gitconfig
+  // (shipped with Xcode) sets credential.helper=osxkeychain. When the
+  // extraheader set by actions/checkout is absent, git falls back to
+  // osxkeychain, which hangs indefinitely on headless CI (no UI to unlock
+  // Keychain). We disable all credential helpers via -c credential.helper=
+  // and inject the GITHUB_TOKEN via an Authorization extraheader instead.
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   const fetchArgs = [
+    // Disable any credential helper (including osxkeychain from system gitconfig)
+    "-c",
+    "credential.helper=",
+    ...(token
+      ? [
+          "-c",
+          `http.https://github.com/.extraheader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+        ]
+      : []),
     "fetch",
     "origin",
     baseBranch,
@@ -129,7 +146,7 @@ export function restoreConfigFromBase(baseBranch: string): void {
     "--no-recurse-submodules",
   ];
   console.log(
-    `[restore-config] Running: git ${fetchArgs.join(" ")} (timeout: 60s)`,
+    `[restore-config] Running: git fetch origin ${baseBranch} --depth=1 --no-recurse-submodules (timeout: 60s, token: ${token ? "yes" : "no"}, credential.helper disabled)`,
   );
   const fetchStart = Date.now();
   try {
